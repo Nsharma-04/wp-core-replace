@@ -106,7 +106,3 @@ git pull origin main
 ```
 
 ---
-
-## License
-
-MIT
