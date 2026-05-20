@@ -66,17 +66,43 @@ fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 4 — Detect installed WordPress version
+# Three fallback methods tried in order:
+#   1. Parse wp-includes/version.php directly
+#   2. Ask WP-CLI for the version
+#   3. Fall back to "latest" with a warning
 # ─────────────────────────────────────────────────────────────────────────────
 step "STEP 4 — Detecting WordPress version"
-WP_VERSION=$(grep "^\$wp_version " "$WP_ROOT/wp-includes/version.php" \
-    | sed "s/.*'\(.*\)'.*/\1/")
+WP_VERSION=""
 
-[[ -n "$WP_VERSION" ]] || error "Could not detect WP version from version.php"
-success "Detected WordPress version: ${BOLD}${WP_VERSION}${RESET}"
+# Method 1 — parse version.php
+log "Method 1: reading wp-includes/version.php ..."
+WP_VERSION=$(grep "^\$wp_version " "$WP_ROOT/wp-includes/version.php" 2>/dev/null \
+    | sed "s/.*'\(.*\)'.*/\1/" || true)
+
+# Method 2 — ask WP-CLI
+if [[ -z "$WP_VERSION" ]]; then
+    warn "Method 1 failed. Trying WP-CLI ..."
+    if command -v wp &>/dev/null; then
+        WP_VERSION=$(wp core version --path="$WP_ROOT" --allow-root 2>/dev/null || true)
+    fi
+fi
+
+# Method 3 — fallback to latest
+if [[ -z "$WP_VERSION" ]]; then
+    warn "Could not detect WP version from version.php or WP-CLI."
+    warn "Proceeding to download the LATEST version of WordPress."
+    WP_VERSION="latest"
+else
+    success "Detected WordPress version: ${BOLD}${WP_VERSION}${RESET}"
+fi
 
 # Safety guard — confirm before destructive steps
 echo ""
-warn "About to REMOVE wp-admin and wp-includes, then re-download WP ${WP_VERSION}"
+if [[ "$WP_VERSION" == "latest" ]]; then
+    warn "About to REMOVE wp-admin and wp-includes, then re-download the LATEST WP version"
+else
+    warn "About to REMOVE wp-admin and wp-includes, then re-download WP ${WP_VERSION}"
+fi
 read -r -p "$(echo -e "${YELLOW}  Continue? [y/N]:${RESET} ")" CONFIRM
 [[ "${CONFIRM,,}" == "y" ]] || { log "Aborted by user."; exit 0; }
 
@@ -88,19 +114,30 @@ rm -rf "${WP_ROOT}/wp-admin" "${WP_ROOT}/wp-includes"
 success "Core directories removed"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# STEP 6 — Re-download the exact same WP version via WP-CLI
+# STEP 6 — Re-download WordPress core via WP-CLI
 # ─────────────────────────────────────────────────────────────────────────────
-step "STEP 6 — Re-downloading WordPress core v${WP_VERSION}"
+step "STEP 6 — Re-downloading WordPress core${WP_VERSION:+ v${WP_VERSION}}"
 
 # Check WP-CLI is available
 command -v wp &>/dev/null || error "wp-cli not found. Install it from https://wp-cli.org"
 
-wp core download \
-    --path="$WP_ROOT" \
-    --version="$WP_VERSION" \
-    --force \
-    --skip-content \
-    --allow-root
+if [[ "$WP_VERSION" == "latest" ]]; then
+    log "Version unknown — downloading latest WordPress release ..."
+    wp core download \
+        --path="$WP_ROOT" \
+        --force \
+        --skip-content \
+        --allow-root
+    # Capture the actual version that was downloaded for the final message
+    WP_VERSION=$(wp core version --path="$WP_ROOT" --allow-root 2>/dev/null || echo "latest")
+else
+    wp core download \
+        --path="$WP_ROOT" \
+        --version="$WP_VERSION" \
+        --force \
+        --skip-content \
+        --allow-root
+fi
 
 success "WordPress ${WP_VERSION} core files restored"
 
