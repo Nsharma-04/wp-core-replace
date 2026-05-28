@@ -10,7 +10,9 @@
 #  Requirements: wp-cli must be installed and on PATH
 # =============================================================================
 
-set -euo pipefail
+set -uo pipefail
+# Note: -e (exit on error) intentionally omitted so non-fatal steps
+# do not abort the script. Each step handles its own errors explicitly.
 
 # ── Colours ──────────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -49,20 +51,25 @@ success "All directories set to 755"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 3 — Remove 0-byte files
+# Uses a temp file list instead of process substitution for wider
+# shell compatibility (cPanel, shared hosting, restricted /dev/fd envs)
 # ─────────────────────────────────────────────────────────────────────────────
 step "STEP 3 — Removing 0-byte files"
-ZERO_COUNT=0
-while IFS= read -r -d '' file; do
-    log "Removing: $file"
-    rm -f "$file"
-    (( ZERO_COUNT++ )) || true
-done < <(find "$WP_ROOT" -type f -empty -print0)
+ZERO_LIST=$(mktemp /tmp/wp_zero_XXXXXX)
+find "$WP_ROOT" -type f -empty > "$ZERO_LIST" 2>/dev/null || true
+ZERO_COUNT=$(wc -l < "$ZERO_LIST" | tr -d ' ')
 
-if [[ $ZERO_COUNT -eq 0 ]]; then
+if [[ "$ZERO_COUNT" -eq 0 ]]; then
     success "No 0-byte files found"
 else
+    while IFS= read -r file; do
+        [[ -z "$file" ]] && continue
+        log "Removing: $file"
+        rm -f "$file"
+    done < "$ZERO_LIST"
     success "Removed ${ZERO_COUNT} zero-byte file(s)"
 fi
+rm -f "$ZERO_LIST"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 4 — Detect installed WordPress version
